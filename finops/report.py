@@ -1,9 +1,10 @@
 """Report assembly — the lab's deliverable: baseline vs optimized + savings chart."""
 from __future__ import annotations
+from typing import Optional
 
 
 def build_report(baseline_usd: float, optimized_usd: float, levers: dict,
-                 sustainability: dict | None = None, period: str = "monthly") -> str:
+                 sustainability: Optional[dict] = None, period: str = "monthly") -> str:
     """Return a markdown cost-optimization report."""
     savings = baseline_usd - optimized_usd
     pct = (savings / baseline_usd * 100.0) if baseline_usd > 0 else 0.0
@@ -29,7 +30,9 @@ def build_report(baseline_usd: float, optimized_usd: float, levers: dict,
             "",
             f"- Energy per query: {sustainability.get('wh_per_query', 0):.2f} Wh",
             f"- Carbon per query: {sustainability.get('carbon_g', 0):.3f} gCO2e",
-            f"- Cheapest+cleanest region: {sustainability.get('best_region', 'n/a')}",
+            f"- Cleanest region: {sustainability.get('best_region', 'n/a')}",
+            f"- Lowest energy-price region: {sustainability.get('cheapest_region', 'n/a')}",
+            f"- Carbon-weighted balanced region: {sustainability.get('balanced_region', 'n/a')}",
         ]
     lines += ["", "_Figures are June-2026 as-of snapshots; re-baseline before acting._"]
     return "\n".join(lines)

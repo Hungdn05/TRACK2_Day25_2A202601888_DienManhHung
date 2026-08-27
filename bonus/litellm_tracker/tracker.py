@@ -4,6 +4,7 @@ The §10 "token tier" of cost observability: attribute $/request per key/team an
 HARD-STOP requests that would blow the budget. Mock backend — no API key needed.
 """
 from __future__ import annotations
+from typing import Optional
 import os, sys, time
 from collections import defaultdict
 
@@ -21,7 +22,7 @@ class BudgetExceeded(Exception):
 
 
 class CostTracker:
-    def __init__(self, budgets: dict | None = None):
+    def __init__(self, budgets: Optional[dict] = None):
         self.budgets = budgets or {}          # api_key -> monthly USD cap
         self.spend = defaultdict(float)       # api_key -> USD spent
         self.log = []
