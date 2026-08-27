@@ -4,6 +4,7 @@ Figures are June-2026 as-of snapshots from the deck's RESEARCH dossier; treat
 live prices as fast-moving (re-baseline before each cohort).
 """
 from __future__ import annotations
+from typing import Optional
 
 
 def request_cost(
@@ -60,19 +61,58 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
-def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
-    """Pick a purchasing tier from a workload's duty cycle + interruptibility.
+# Per-GPU-type spot interruption rate (per hour) — H100-class spot is far more
+# stable than small inference GPUs; drives the spot-vs-reserved trade-off.
+SPOT_INTERRUPT_RATE = {
+    "H100": 0.02, "H200": 0.02, "B200": 0.02, "MI300X": 0.03,
+    "A100": 0.04, "A10G": 0.08, "L4": 0.10,
+}
+DEFAULT_INTERRUPT_RATE = 0.05
 
-    DOCUMENTED simple policy (instructor extension point — swap in your own):
+
+def _spot_effective_multiplier(interrupt_rate: float, ckpt_overhead_frac: float = 0.03,
+                               rework_hours_per_interrupt: float = 0.5) -> float:
+    """Effective hours multiplier when running on spot (checkpoint + rework)."""
+    return 1.0 + ckpt_overhead_frac + interrupt_rate * rework_hours_per_interrupt
+
+
+def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45,
+                   gpu_type: Optional[str] = None, job_days: Optional[float] = None,
+                   reserved_1yr_discount: float = 0.20, reserved_3yr_discount: float = 0.45,
+                   spot_hr: Optional[float] = None, on_demand_hr: Optional[float] = None) -> str:
+    """Pick a purchasing tier from duty cycle, interruptibility, GPU type and job length.
+
+    Extension-1 policy (superset of the documented simple rule — old call sites
+    with only (hours_per_day, interruptible) keep the original behaviour):
       - interruptible & not 24/7  -> 'spot'      (checkpoint and ride the discount)
       - duty cycle >= break-even  -> 'reserved'  (steady, high utilization)
       - otherwise                 -> 'on_demand' (spiky / low duty)
+
+    New considerations:
+      - spot interruption rate varies by GPU type (H100-class spot is stable,
+        small inference GPUs get reclaimed often). When real prices are given we
+        compare spot's *effective* hourly cost (spot price x checkpoint/rework
+        multiplier) against 3yr reserved: if spot is no longer cheaper, a
+        high-duty interruptible job falls back to 'reserved'.
+      - reserved term is chosen by job length: 24/7 permanent services get
+        'reserved' (3yr, max discount); high-duty but non-24/7 jobs get
+        'reserved_1yr' (above the 1yr break-even, less commitment).
     """
     duty = max(0.0, hours_per_day) / 24.0
     be = break_even_utilization(reserved_discount)
     if interruptible and hours_per_day < 24:
+        rate = SPOT_INTERRUPT_RATE.get(gpu_type, DEFAULT_INTERRUPT_RATE)
+        spot_mult = _spot_effective_multiplier(rate)
+        if duty >= be and spot_hr is not None and on_demand_hr and on_demand_hr > 0:
+            spot_effective_hr = spot_hr * spot_mult
+            reserved_hr = on_demand_hr * (1.0 - reserved_3yr_discount)
+            if spot_effective_hr >= reserved_hr:
+                return "reserved"
         return "spot"
     if duty >= be:
+        be_1yr = break_even_utilization(reserved_1yr_discount)
+        if duty >= be_1yr and hours_per_day < 24 and job_days is not None and job_days < 365:
+            return "reserved_1yr"
         return "reserved"
     return "on_demand"
 
